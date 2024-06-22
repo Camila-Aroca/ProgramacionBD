@@ -1,0 +1,335 @@
+--CUARTO: CREAR PROCEDIMIENTO QUE ALMACENA ERRORES
+CREATE OR REPLACE PROCEDURE sp_salvame (
+  p_iderror number, p_subp VARCHAR2, p_msg VARCHAR2
+)
+AS
+   v_sql varchar2(300);
+BEGIN
+   v_sql := 'INSERT INTO error_proceso
+             VALUES (:1, :2, :3)';
+   EXECUTE IMMEDIATE v_sql USING p_iderror, p_subp, p_msg;          
+END sp_salvame;
+/
+
+
+CREATE OR REPLACE FUNCTION fn_autor (
+     p_tituloid NUMBER
+) RETURN VARCHAR2
+AS
+  v_sql VARCHAR2(300);
+  v_autor VARCHAR2(50);
+BEGIN
+  v_sql := 'SELECT nombre||apellidos 
+            FROM autor
+            WHERE tituloid = :1';
+  EXECUTE IMMEDIATE v_sql INTO v_autor USING p_tituloid;
+  RETURN v_autor;
+END fn_autor;
+
+/
+
+--FUNCION PARA RECUPERAR TITULO DEL LIBRO
+CREATE OR REPLACE FUNCTION fn_titulo (
+     p_tituloid NUMBER
+) RETURN VARCHAR2
+AS
+  v_sql VARCHAR2(300);
+  v_titulo VARCHAR2(70);
+BEGIN
+  v_sql := 'SELECT titulo
+            FROM titulo
+            WHERE tituloid = :1';
+  EXECUTE IMMEDIATE v_sql INTO v_titulo USING p_tituloid;
+  RETURN v_titulo;
+END fn_titulo;
+
+
+/
+
+
+--TERCERO: FUNCION ALMACENADA QUE OBTIENE LA CARRERA
+CREATE OR REPLACE FUNCTION fn_carrera (
+     p_carreraid NUMBER
+) RETURN VARCHAR2
+AS
+  v_sql VARCHAR2(300);
+  v_carrera VARCHAR2(50);
+  v_msg VARCHAR2(300);
+BEGIN
+  BEGIN
+      v_sql := 'SELECT descripcion
+                FROM carrera
+                WHERE carreraid = :1';
+      EXECUTE IMMEDIATE v_sql INTO v_carrera USING p_carreraid;
+  EXCEPTION
+     WHEN OTHERS THEN
+        v_msg := SQLERRM;
+        v_carrera := 'NO POSEE CARRERA';
+        sp_salvame(sq_error.NEXTVAL, $$PLSQL_UNIT, v_msg);
+  END;
+  RETURN v_carrera;
+END fn_carrera;
+
+/
+
+
+--FUNCION QUE RECUPERA PORCENTAJES DE MULTA SEGUN DIAS DE ATRASO
+--Para esta funcion se deben obtener los dias de atraso primero
+CREATE OR REPLACE FUNCTION fn_pctmulta(
+    p_dias NUMBER
+) RETURN NUMBER
+AS
+    v_sql VARCHAR2(400);
+    v_pct NUMBER;
+    v_msg VARCHAR2(300);
+BEGIN
+    BEGIN
+        v_sql := 'SELECT porcentaje_multa/100
+                  FROM porc_multa_prestamo
+                  WHERE :1 BETWEEN cant_dias_ini AND cant_dias_ter';
+        EXECUTE IMMEDIATE v_sql INTO v_pct USING p_dias;
+    EXCEPTION
+        WHEN OTHERS THEN
+        v_pct := 0.05;
+        v_msg := SQLERRM;
+        sp_salvame(SQ_ERROR.nextval, $$PLSQL_UNIT, v_msg);
+    END;
+RETURN v_pct;
+END fn_pctmulta;
+
+/
+
+CREATE OR REPLACE FUNCTION fn_multa(
+    p_pctmulta NUMBER, p_precio NUMBER
+) RETURN NUMBER
+AS 
+BEGIN 
+    RETURN ROUND(p_precio * p_pctmulta);
+END fn_multa;
+
+--SEGUNDO: PACKAGE CON 2 CONSTRUCTORES PUBLICOS
+/*
+-Funcion que obtiene editorial del libro pedido en prestamo
+-Funcion ALMACENADA que obtiene escuela a la que pertenece el alumno
+*/
+/
+--ENCABEZADO PACKAGE
+CREATE OR REPLACE PACKAGE pkg_multas AS
+    vp_editorial VARCHAR(30);
+    vp_escuela VARCHAR(30);
+    FUNCTION fn_editorial (p_editorialid NUMBER) RETURN VARCHAR2;
+    FUNCTION fn_escuela (p_carreraid NUMBER) RETURN VARCHAR2;
+END pkg_multas;
+
+/
+
+CREATE OR REPLACE PACKAGE BODY pkg_multas AS
+    
+    FUNCTION fn_escuela (
+        p_carreraid NUMBER
+    ) RETURN VARCHAR2
+    AS
+        v_sql VARCHAR2(300);
+        v_escuela VARCHAR2(30);
+        v_msg VARCHAR2(300);
+    BEGIN
+        BEGIN
+            v_sql := 'SELECT e.descripcion
+                        FROM escuela e JOIN carrera c
+                        ON e.escuelaid = c.escuelaid
+                        WHERE c.carreraid = :1';
+        EXECUTE IMMEDIATE v_sql INTO v_escuela USING p_carreraid;
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_escuela := 'NO POSEE ESCUELA';
+                v_msg := SQLERRM;
+                sp_salvame(SQ_ERROR.nextval, $$PLSQL_UNIT, v_msg);
+        END;
+        RETURN v_escuela;       
+    END fn_escuela;
+
+    FUNCTION fn_editorial(
+     p_editorialid NUMBER
+    ) RETURN VARCHAR2
+    AS
+        v_sql VARCHAR2(300);
+        v_editorial VARCHAR2(30);
+    BEGIN
+        v_sql := 'SELECT descripcion
+                  FROM editorial
+                  WHERE editorialid = :1';
+    EXECUTE IMMEDIATE v_sql INTO v_editorial USING p_editorialid;
+    RETURN v_editorial;
+    END fn_editorial;
+    
+END pkg_multas;
+
+/
+
+--PRIMERO: OBTENEMOS LOS DATOS PARA LA TABLA DE PRESTAMOS,
+/*
+Esto lo hacemos mediante un procedimiento almacenado ppal que genera la info de
+prestamos de libros en el año y mes a procesar (se ingresan al proceso con parámetros.)
+Y multas.
+*/
+CREATE OR REPLACE PROCEDURE sp_procesa_prestamos (
+    --parametro en este caso es la fecha, deben mostrarse préstamos hechos en agosto del año
+    --en curso.
+    p_fecha VARCHAR2
+)
+AS
+    --RECUPERAMOS LA INFO DE LOS PRESTAMOS QUE YA EXISTE EN LAS TABLAS DE LA BD
+    --O BIEN LA INFO QUE NECESITAREMOS PARA OBTENER LOS OTROS DATOS
+    CURSOR c_prestamos IS 
+        SELECT
+            al.alumnoid, al.nombre ||' '||al.apaterno||' '||al.amaterno alumno,
+            p.fecha_inicio, t.tituloid, t.editorialid, al.carreraid, c.escuelaid,
+            e.nombre||' '||e.apaterno||' '||e.amaterno empleado, p.fecha_termino, 
+            p.fecha_entrega, t.precio
+            
+        FROM alumno al JOIN prestamo p
+        ON al.alumnoid = p.alumnoid
+        JOIN titulo t
+        ON t.tituloid = p.tituloid
+        JOIN carrera c
+        ON c.carreraid = al.carreraid
+        JOIN empleado e
+        ON e.empleadoid = p.empleadoid
+        WHERE to_char(p.fecha_termino, 'MM/YYYY') = p_fecha; 
+    --DECLARACION DE VARIABLES ESCALARES
+    v_dias NUMBER;
+    v_multa NUMBER;
+    v_castigo NUMBER;
+    v_total_multa NUMBER;
+    
+    --DECLARACION VARRAY QUE ESTABLECE CASTIGO SEGÚN CARRERA
+    TYPE t_arrpct IS VARRAY(8) OF NUMBER;
+    --CREACIÓN DE INSTANCIA DEL VARRAY
+    v_arr t_arrpct := t_arrpct(500, 700, 900, 1000, 1300, 1500, 1700, 1900);
+    
+BEGIN
+    FOR r_prestamos IN c_prestamos LOOP
+    
+    --CALCULO DE CANTIDAD DE DIAS DE ATRASO
+    
+--CALCULO DE CANTIDAD DE DIAS DE ATRASO
+    IF r_prestamos.fecha_entrega > r_prestamos.fecha_termino THEN
+        v_dias := TRUNC(r_prestamos.fecha_entrega - r_prestamos.fecha_termino); -- Calculate days overdue
+        v_multa := fn_multa(fn_pctmulta(v_dias), r_prestamos.precio); -- Calculate fine based on days overdue
+    ELSE 
+        v_dias := 0;
+        v_multa := 0;
+    END IF;
+    
+    --CALCULO CASTIGO SEGÚN ESCUELA
+    
+    IF v_multa > 0 THEN 
+        v_castigo := v_dias * 
+        CASE pkg_multas.fn_escuela(r_prestamos.carreraid)
+            WHEN 'Turismo' then v_arr(1)
+            WHEN 'Salud' then v_arr(2)
+            WHEN 'Ingenieria' then v_arr(3)
+            WHEN 'Administracion' then v_arr(4)
+            WHEN 'Informatica' then v_arr(5)
+            WHEN 'Comunicacion' then v_arr(6)
+            WHEN 'Diseno' then v_arr(7)
+            WHEN 'Construccion' then v_arr(8)
+            ELSE 0
+        END;
+    ELSE 
+        v_castigo := 0;
+    END IF;
+
+    
+    v_total_multa := v_multa + v_castigo;
+    
+    dbms_output.put_line(
+        c_prestamos%ROWCOUNT
+        ||' | '||p_fecha
+        ||' | '||fn_titulo(r_prestamos.tituloid)
+        ||' | '||pkg_multas.fn_editorial(r_prestamos.editorialid)
+        ||' | '||fn_autor(r_prestamos.tituloid)
+        ||' | '||r_prestamos.alumno
+        ||' | '||pkg_multas.fn_escuela(r_prestamos.carreraid)
+        ||' | '||fn_carrera(r_prestamos.carreraid)
+        ||' | '||r_prestamos.empleado
+        ||' | '||r_prestamos.fecha_inicio
+        ||' | '||r_prestamos.fecha_termino
+        ||' | '||r_prestamos.fecha_entrega
+        ||' | '||v_dias
+        ||' | '||v_multa
+        ||' | '||v_castigo
+        ||' | '||v_total_multa
+        
+        
+    );
+    
+    INSERT INTO prestamos_libros_mensuales 
+      VALUES (    
+        sq_corr.NEXTVAL
+        ,p_fecha
+        ,fn_titulo(r_prestamos.tituloid)
+        ,pkg_multas.fn_editorial(r_prestamos.editorialid)
+        ,fn_autor(r_prestamos.tituloid)
+        ,r_prestamos.alumno
+        ,pkg_multas.fn_escuela(r_prestamos.carreraid)
+        ,fn_carrera(r_prestamos.carreraid)
+        ,r_prestamos.empleado
+        ,r_prestamos.fecha_inicio
+        ,r_prestamos.fecha_termino
+        ,r_prestamos.fecha_entrega
+        ,v_dias
+        ,v_multa
+        ,v_castigo
+        ,v_total_multa);
+        
+    END LOOP;
+    COMMIT;
+END sp_procesa_prestamos;
+
+/
+
+--TRIGGER QUE ELIMINA DE LA TABLA A LOS ALUMNOS QUE TENGAN 0 EN TOTAL_MULTA
+--crea tabla temporar
+CREATE GLOBAL TEMPORARY TABLE temp_rowids (
+    rowid_to_delete ROWID
+) ON COMMIT DELETE ROWS;
+
+
+
+--identifica los alumnos en prestamos_libros_mensuales que tengan 0 de multa
+--y los inserta en la tabla temporal temp_rowids
+CREATE OR REPLACE TRIGGER trg_alumno
+AFTER INSERT ON prestamos_libros_mensuales
+FOR EACH ROW
+BEGIN
+    IF :NEW.total_multa = 0 THEN
+        INSERT INTO temp_rowids (rowid_to_delete) VALUES (:NEW.ROWID);
+    END IF;
+END trg_alumno;
+/
+
+
+--en las filas de temp_rowid que tengan la misma rowid que aquellas en prestamos_libros_mensuales
+--se borran esas filas de prestamos_libros_mensuales
+CREATE OR REPLACE TRIGGER trg_delete_zero_total_multa
+AFTER INSERT ON prestamos_libros_mensuales
+BEGIN
+    FOR r IN (SELECT rowid_to_delete FROM temp_rowids) LOOP
+        DELETE FROM prestamos_libros_mensuales WHERE ROWID = r.rowid_to_delete;
+    END LOOP;
+    DELETE FROM temp_rowids; -- Limpiar la tabla temporal después de la eliminación
+END trg_delete_zero_total_multa;
+/
+
+
+
+
+
+begin
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE error_proceso';
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE prestamos_libros_mensuales';
+    sp_procesa_prestamos('08/2023');
+    EXECUTE IMMEDIATE 'DROP SEQUENCE SQ_ERROR';  
+    EXECUTE IMMEDIATE 'CREATE SEQUENCE SQ_ERROR'; 
+end;
