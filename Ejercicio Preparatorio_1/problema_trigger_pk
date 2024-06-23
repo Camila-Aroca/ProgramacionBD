@@ -1,0 +1,22 @@
+Summary of Issue and Troubleshooting Steps
+Issue:
+When executing the PL/SQL code to populate the puntos_mes_huesped table using a trigger, you encounter a unique constraint violation (ORA-00001). This occurs because the trigger attempts to insert duplicate primary key values into puntos_mes_huesped.
+
+Trigger Overview:
+You have a trigger (tr_puntos) designed to calculate and insert data into puntos_mes_huesped based on data inserted into detalle_diario_huespedes.
+
+Troubleshooting Steps:
+
+Dropped and Recreated Table:
+
+Initially, you dropped the puntos_mes_huesped table, removed its primary key constraint, and recreated it to test the trigger successfully. However, this approach is not feasible for a production environment due to security concerns.
+Unique Constraint Violation:
+
+Even after ensuring no duplicate data is present (by truncating tables before testing), you continue to face issues due to the primary key constraint on puntos_mes_huesped.
+Desired Outcome:
+You need to modify the trigger so that it correctly inserts data into puntos_mes_huesped without violating the primary key constraint, allowing for repeated execution without needing to drop and recreate constraints.
+
+Steps Taken for Resolution:
+
+Verified the structure and data flow between detalle_diario_huespedes and puntos_mes_huesped.
+Adjusted the trigger logic and data calculations to ensure accurate and non-duplicate inserts.
