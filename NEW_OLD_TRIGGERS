@@ -1,0 +1,131 @@
+1. Actualización (UPDATE):
+
+  *OLD: Se refiere a los valores antiguos de las columnas antes de que se realice la actualización.
+  *NEW: Se refiere a los valores nuevos que se asignarán a las columnas después de la actualización.
+  Ejemplo:
+  Supongamos una tabla Empleados con columnas Nombre y Salario. Si queremos auditar cambios en el salario usando un trigger, 
+  podríamos hacer lo siguiente:
+  
+ CREATE OR REPLACE TRIGGER trg_audit_salario
+  BEFORE UPDATE ON Empleados
+  FOR EACH ROW
+  BEGIN
+      INSERT INTO Log_Salarios (Nombre, Salario_Antiguo, Salario_Nuevo, Fecha)
+      VALUES (:OLD.Nombre, :OLD.Salario, :NEW.Salario, SYSDATE);
+  END;
+
+Aquí, :OLD.Salario representa el salario antes de la actualización.
+:NEW.Salario representa el salario que se actualizará.
+
+2. Inserción (INSERT):
+
+  *OLD: En el caso de una inserción, OLD generalmente no se utiliza porque no hay valores antiguos.
+  *NEW: Representa los valores nuevos que se están insertando en las columnas.
+  Ejemplo:
+  Si queremos registrar la inserción de nuevos empleados en una tabla de auditoría:
+  CREATE OR REPLACE TRIGGER trg_audit_insercion_empleado
+  AFTER INSERT ON Empleados
+  FOR EACH ROW
+  BEGIN
+      INSERT INTO Log_Insercion_Empleados (Nombre, Fecha_Insercion)
+      VALUES (:NEW.Nombre, SYSDATE);
+  END;
+
+3. Eliminación (DELETE):
+
+  *OLD: Representa los valores antiguos de las columnas antes de que se realice la eliminación.
+  *NEW: En el caso de la eliminación, NEW generalmente no se utiliza porque no hay valores nuevos.
+  Ejemplo:
+  Si queremos registrar la eliminación de empleados:
+  CREATE OR REPLACE TRIGGER trg_audit_eliminar_empleado
+  BEFORE DELETE ON Empleados
+  FOR EACH ROW
+  BEGIN
+      INSERT INTO Log_Eliminacion_Empleados (Nombre, Fecha_Eliminacion)
+      VALUES (:OLD.Nombre, SYSDATE);
+  END;
+
+
+BEFORE/AFTER/INSTEAD OF
+
+BEFORE:
+
+Uso: Un trigger BEFORE se activa antes de que se ejecute la operación que lo desencadena (por ejemplo, antes de una inserción, actualización o eliminación).
+Propósito: Puede utilizarse para modificar los valores que se van a insertar, actualizar o eliminar antes de que la operación se efectúe realmente en la tabla.
+Ejemplo: Validar o ajustar valores antes de una inserción o actualización.
+
+  CREATE OR REPLACE TRIGGER trg_before_insert
+  BEFORE INSERT ON Empleados
+  FOR EACH ROW
+  BEGIN
+      -- Validar y ajustar el sueldo base antes de la inserción
+      IF (:new.sueldo_base < 1000) THEN
+          :new.sueldo_base := 1000; -- Ajustar el sueldo base mínimo
+      END IF;
+  END;
+
+
+AFTER:
+
+Uso: Un trigger AFTER se activa después de que se ha ejecutado la operación que lo desencadena (después de una inserción, actualización o eliminación).
+Propósito: Se utiliza para realizar acciones que dependen del resultado final de la operación realizada en la tabla.
+Ejemplo: Auditar la operación después de que se haya completado.
+
+    CREATE OR REPLACE TRIGGER trg_after_update
+    AFTER UPDATE ON Empleados
+    FOR EACH ROW
+    BEGIN
+        INSERT INTO Auditoria_Empleados (id_empleado, fecha_modificacion, cambios_realizados)
+        VALUES (:old.id_empleado, SYSDATE, 'Se actualizó información de empleado');
+    END;
+
+INSTEAD OF:
+
+Uso: Un trigger INSTEAD OF se utiliza principalmente en vistas o tablas que tienen disparadores (triggers) para sustituir la acción normal de la operación que desencadena el trigger.
+Propósito: Permite realizar acciones personalizadas en lugar de la operación original, como aplicar lógica de negocio compleja antes de insertar o actualizar datos en una vista que no es actualizable directamente.
+Ejemplo: Modificar los datos que se van a insertar en una vista que contiene datos de múltiples tablas base.
+
+
+  CREATE OR REPLACE TRIGGER trg_instead_of_insert
+  INSTEAD OF INSERT ON Vista_Equipo
+  BEGIN
+      -- Insertar datos en las tablas subyacentes
+      INSERT INTO Equipos (id_equipo, nombre_equipo)
+      VALUES (:new.id_equipo, :new.nombre_equipo);
+      
+      INSERT INTO Jugadores (id_jugador, nombre_jugador, id_equipo)
+      VALUES (:new.id_jugador, :new.nombre_jugador, :new.id_equipo);
+      
+      -- Realizar otras acciones necesarias
+      COMMIT; -- Confirmar los cambios
+  END;
+
+FOR EACH ROW:
+
+Uso: FOR EACH ROW especifica que el trigger se activa una vez para cada fila afectada por la operación que desencadena el trigger.
+Propósito: Permite acceder a los valores antiguos (OLD) y nuevos (NEW) de las filas individualmente afectadas por la operación.
+Ejemplo: Auditar o registrar cambios específicos en cada fila que se inserta, actualiza o elimina.
+
+  CREATE OR REPLACE TRIGGER trg_after_delete_row
+  AFTER DELETE ON Empleados
+  FOR EACH ROW
+  BEGIN
+      INSERT INTO Empleados_Eliminados (id_empleado, nombre_empleado, fecha_eliminacion)
+      VALUES (:old.id_empleado, :old.nombre_empleado, SYSDATE);
+  END;
+
+
+FOR EACH STATEMENT:
+
+Uso: FOR EACH STATEMENT especifica que el trigger se activa una vez para cada operación de declaración que afecta a una o más filas (aunque no necesariamente para cada fila individual).
+Propósito: Útil para realizar acciones que dependen de un conjunto de filas afectadas por una sola operación.
+Ejemplo: Mantener un contador o realizar una operación única basada en el resultado de una declaración que afecta a múltiples filas.
+
+  CREATE OR REPLACE TRIGGER trg_after_insert_statement
+  AFTER INSERT ON Ventas
+  FOR EACH STATEMENT
+  BEGIN
+      UPDATE Resumen_Ventas
+      SET total_ventas = (SELECT SUM(monto_venta) FROM Ventas);
+  END;
+
